@@ -308,7 +308,7 @@ func TestCancel(t *testing.T) {
 
 	go func() {
 		if err := qry.Exec(); err != context.Canceled {
-			t.Fatalf("expected to get context cancel error: '%v', got '%v'", context.Canceled, err)
+			t.Errorf("expected to get context cancel error: '%v', got '%v'", context.Canceled, err)
 		}
 		wg.Done()
 	}()

@@ -515,7 +515,7 @@ func getKeyspaceMetadata(session *Session, keyspaceName string) (*KeyspaceMetada
 		if iter.NumRows() == 0 {
 			return nil, ErrKeyspaceDoesNotExist
 		}
-		iter.Scan(&keyspace.DurableWrites, &replication)
+		iter.scan(&keyspace.DurableWrites, &replication)
 		err := iter.Close()
 		if err != nil {
 			return nil, fmt.Errorf("Error querying keyspace schema: %v", err)
@@ -541,7 +541,7 @@ func getKeyspaceMetadata(session *Session, keyspaceName string) (*KeyspaceMetada
 		if iter.NumRows() == 0 {
 			return nil, ErrKeyspaceDoesNotExist
 		}
-		iter.Scan(&keyspace.DurableWrites, &keyspace.StrategyClass, &strategyOptionsJSON)
+		iter.scan(&keyspace.DurableWrites, &keyspace.StrategyClass, &strategyOptionsJSON)
 		err := iter.Close()
 		if err != nil {
 			return nil, fmt.Errorf("Error querying keyspace schema: %v", err)
@@ -590,14 +590,12 @@ func getTableMetadata(session *Session, keyspaceName string) ([]TableMetadata, e
 		}
 
 		scan = func(iter *Iter, table *TableMetadata) bool {
-			r := iter.Scan(
-				&table.Name,
-			)
+			r := iter.scan(&table.Name)
 			if !r {
 				iter = switchIter()
 				if iter != nil {
 					switchIter = func() *Iter { return nil }
-					r = iter.Scan(&table.Name)
+					r = iter.scan(&table.Name)
 				}
 			}
 			return r
@@ -617,7 +615,7 @@ func getTableMetadata(session *Session, keyspaceName string) ([]TableMetadata, e
 		WHERE keyspace_name = ?`
 
 		scan = func(iter *Iter, table *TableMetadata) bool {
-			return iter.Scan(
+			return iter.scan(
 				&table.Name,
 				&table.KeyValidator,
 				&table.Comparator,
@@ -638,7 +636,7 @@ func getTableMetadata(session *Session, keyspaceName string) ([]TableMetadata, e
 		WHERE keyspace_name = ?`
 
 		scan = func(iter *Iter, table *TableMetadata) bool {
-			return iter.Scan(
+			return iter.scan(
 				&table.Name,
 				&table.KeyValidator,
 				&table.Comparator,

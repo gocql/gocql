@@ -624,9 +624,9 @@ func (s *Session) ExecuteBatchCAS(batch *Batch, dest ...interface{}) (applied bo
 
 	if len(iter.Columns()) > 1 {
 		dest = append([]interface{}{&applied}, dest...)
-		iter.Scan(dest...)
+		iter.scan(dest...)
 	} else {
-		iter.Scan(&applied)
+		iter.scan(&applied)
 	}
 
 	return applied, iter, nil
@@ -1142,8 +1142,13 @@ func (q *Query) Scan(dest ...interface{}) error {
 	if err := iter.checkErrAndNotFound(); err != nil {
 		return err
 	}
-	iter.Scan(dest...)
-	return iter.Close()
+	sc := iter.Scanner()
+	if sc.Next() {
+		if err := sc.Scan(dest...); err != nil {
+			return err
+		}
+	}
+	return sc.Err()
 }
 
 // ScanCAS executes a lightweight transaction (i.e. an UPDATE or INSERT
@@ -1156,11 +1161,12 @@ func (q *Query) ScanCAS(dest ...interface{}) (applied bool, err error) {
 	if err := iter.checkErrAndNotFound(); err != nil {
 		return false, err
 	}
+
 	if len(iter.Columns()) > 1 {
 		dest = append([]interface{}{&applied}, dest...)
-		iter.Scan(dest...)
+		iter.scan(dest...)
 	} else {
-		iter.Scan(&applied)
+		iter.scan(&applied)
 	}
 	return applied, iter.Close()
 }
@@ -1225,7 +1231,9 @@ func (iter *Iter) Host() *HostInfo {
 
 // Columns returns the name and type of the selected columns.
 func (iter *Iter) Columns() []ColumnInfo {
-	return iter.meta.columns
+	out := make([]ColumnInfo, len(iter.meta.columns))
+	copy(out, iter.meta.columns)
+	return out
 }
 
 type Scanner interface {
@@ -1268,12 +1276,10 @@ func (is *iterScanner) Next() bool {
 	}
 
 	for i := 0; i < len(is.cols); i++ {
-		col, err := iter.readColumn()
-		if err != nil {
-			iter.err = err
+		is.cols[i], iter.err = iter.readColumn()
+		if iter.err != nil {
 			return false
 		}
-		is.cols[i] = col
 	}
 	iter.pos++
 	is.valid = true
@@ -1364,7 +1370,7 @@ func (iter *Iter) readColumn() ([]byte, error) {
 // Scan returns true if the row was successfully unmarshaled or false if the
 // end of the result set was reached or if an error occurred. Close should
 // be called afterwards to retrieve any potential errors.
-func (iter *Iter) Scan(dest ...interface{}) bool {
+func (iter *Iter) scan(dest ...interface{}) bool {
 	if iter.err != nil {
 		return false
 	}
@@ -1372,7 +1378,7 @@ func (iter *Iter) Scan(dest ...interface{}) bool {
 	if iter.pos >= iter.numRows {
 		if iter.next != nil {
 			*iter = *iter.next.fetch()
-			return iter.Scan(dest...)
+			return iter.scan(dest...)
 		}
 		return false
 	}
@@ -1435,9 +1441,7 @@ func (iter *Iter) Warnings() []string {
 // the query or the iteration.
 func (iter *Iter) Close() error {
 	if atomic.CompareAndSwapInt32(&iter.closed, 0, 1) {
-		if iter.framer != nil {
-			iter.framer = nil
-		}
+		iter.framer = nil
 	}
 
 	return iter.err
@@ -1845,6 +1849,9 @@ func NewTraceWriter(session *Session, w io.Writer) Tracer {
 }
 
 func (t *traceWriter) Trace(traceId []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	var (
 		coordinator string
 		duration    int
@@ -1853,23 +1860,11 @@ func (t *traceWriter) Trace(traceId []byte) {
 			FROM system_traces.sessions
 			WHERE session_id = ?`, traceId)
 
-	iter.Scan(&coordinator, &duration)
+	iter.scan(&coordinator, &duration)
 	if err := iter.Close(); err != nil {
-		t.mu.Lock()
 		fmt.Fprintln(t.w, "Error:", err)
-		t.mu.Unlock()
 		return
 	}
-
-	var (
-		timestamp time.Time
-		activity  string
-		source    string
-		elapsed   int
-	)
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	fmt.Fprintf(t.w, "Tracing session %016x (coordinator: %s, duration: %v):\n",
 		traceId, coordinator, time.Duration(duration)*time.Microsecond)
@@ -1878,7 +1873,18 @@ func (t *traceWriter) Trace(traceId []byte) {
 			FROM system_traces.events
 			WHERE session_id = ?`, traceId)
 
-	for iter.Scan(&timestamp, &activity, &source, &elapsed) {
+	sc := iter.Scanner()
+	for sc.Next() {
+		var (
+			timestamp time.Time
+			activity  string
+			source    string
+			elapsed   int
+		)
+		if err := sc.Scan(&timestamp, &activity, &source, &elapsed); err != nil {
+			fmt.Fprintln(t.w, "Error:", err)
+			return
+		}
 		fmt.Fprintf(t.w, "%s: %s (source: %s, elapsed: %d)\n",
 			timestamp.Format("2006/01/02 15:04:05.999999"), activity, source, elapsed)
 	}

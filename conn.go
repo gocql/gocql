@@ -1342,7 +1342,7 @@ func (c *Conn) executeBatch(ctx context.Context, batch *Batch) *Iter {
 	}
 }
 
-func (c *Conn) query(ctx context.Context, statement string, values ...interface{}) (iter *Iter) {
+func (c *Conn) query(ctx context.Context, statement string, values ...interface{}) *Iter {
 	q := c.session.Query(statement, values...).Consistency(One)
 	q.trace = nil
 	q.skipPrepare = true
@@ -1350,58 +1350,53 @@ func (c *Conn) query(ctx context.Context, statement string, values ...interface{
 	return c.executeQuery(ctx, q)
 }
 
-func (c *Conn) awaitSchemaAgreement(ctx context.Context) (err error) {
+func (c *Conn) awaitSchemaAgreement(ctx context.Context) error {
 	const (
 		peerSchemas  = "SELECT * FROM system.peers"
 		localSchemas = "SELECT schema_version FROM system.local WHERE key='local'"
 	)
 
-	var versions map[string]struct{}
-	var schemaVersion string
-
-	endDeadline := time.Now().Add(c.session.cfg.MaxWaitSchemaAgreement)
-	for time.Now().Before(endDeadline) {
-		iter := c.query(ctx, peerSchemas)
-
-		versions = make(map[string]struct{})
-
-		rows, err := iter.SliceMap()
+	fetchVersions := func() (map[string]struct{}, error) {
+		rows, err := c.query(ctx, peerSchemas).SliceMap()
 		if err != nil {
-			goto cont
+			return nil, err
 		}
 
+		versions := make(map[string]struct{}, len(rows)+1)
 		for _, row := range rows {
 			host, err := c.session.hostInfoFromMap(row, &HostInfo{connectAddress: c.host.ConnectAddress(), port: c.session.cfg.Port})
 			if err != nil {
-				goto cont
+				return nil, err
 			}
 			if !isValidPeer(host) || host.schemaVersion == "" {
-				Logger.Printf("invalid peer or peer with empty schema_version: peer=%q", host)
 				continue
 			}
 
 			versions[host.schemaVersion] = struct{}{}
 		}
 
-		if err = iter.Close(); err != nil {
-			goto cont
-		}
-
-		iter = c.query(ctx, localSchemas)
-		for iter.Scan(&schemaVersion) {
+		sc := c.query(ctx, localSchemas).Scanner()
+		for sc.Next() {
+			var schemaVersion string
+			if err := sc.Scan(&schemaVersion); err != nil {
+				return nil, err
+			}
 			versions[schemaVersion] = struct{}{}
-			schemaVersion = ""
 		}
 
-		if err = iter.Close(); err != nil {
-			goto cont
+		if err := sc.Err(); err != nil {
+			return nil, err
 		}
+		return versions, nil
+	}
 
-		if len(versions) <= 1 {
+	endDeadline := time.Now().Add(c.session.cfg.MaxWaitSchemaAgreement)
+	for time.Now().Before(endDeadline) {
+		versions, err := fetchVersions()
+		if err == nil && len(versions) == 1 {
 			return nil
 		}
 
-	cont:
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -1409,29 +1404,21 @@ func (c *Conn) awaitSchemaAgreement(ctx context.Context) (err error) {
 		}
 	}
 
-	if err != nil {
-		return err
-	}
-
-	schemas := make([]string, 0, len(versions))
-	for schema := range versions {
-		schemas = append(schemas, schema)
-	}
-
 	// not exported
-	return fmt.Errorf("gocql: cluster schema versions not consistent: %+v", schemas)
+	return errors.New("gocql: cluster schema versions not consistent")
 }
 
 func (c *Conn) localHostInfo(ctx context.Context) (*HostInfo, error) {
-	row, err := c.query(ctx, "SELECT * FROM system.local WHERE key='local'").rowMap()
-	if err != nil {
-		return nil, err
+	m := make(map[string]interface{})
+	iter := c.query(ctx, "SELECT * FROM system.local WHERE key='local'")
+	if ok := iter.MapScan(m); !ok {
+		return nil, iter.err
 	}
 
 	port := c.conn.RemoteAddr().(*net.TCPAddr).Port
 
 	// TODO(zariel): avoid doing this here
-	host, err := c.session.hostInfoFromMap(row, &HostInfo{connectAddress: c.host.connectAddress, port: port})
+	host, err := c.session.hostInfoFromMap(m, &HostInfo{connectAddress: c.host.connectAddress, port: port})
 	if err != nil {
 		return nil, err
 	}

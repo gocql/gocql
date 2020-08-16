@@ -299,66 +299,74 @@ func TupleColumnName(c string, n int) string {
 	return fmt.Sprintf("%s[%d]", c, n)
 }
 
-func (iter *Iter) RowData() (RowData, error) {
-	if iter.err != nil {
-		return RowData{}, iter.err
-	}
+func (iter *Iter) rowData() (RowData, error) {
+	// TODO: unexport this? What is it used for?
 
-	columns := make([]string, 0, len(iter.Columns()))
-	values := make([]interface{}, 0, len(iter.Columns()))
-
+	columns := make([]string, 0, len(iter.meta.columns))
 	for _, column := range iter.Columns() {
 		if c, ok := column.TypeInfo.(TupleTypeInfo); !ok {
-			val := column.TypeInfo.New()
 			columns = append(columns, column.Name)
-			values = append(values, val)
 		} else {
-			for i, elem := range c.Elems {
+			for i := range c.Elems {
 				columns = append(columns, TupleColumnName(column.Name, i))
-				values = append(values, elem.New())
 			}
 		}
 	}
 
-	rowData := RowData{
+	return RowData{
 		Columns: columns,
-		Values:  values,
-	}
-
-	return rowData, nil
+		Values:  iter.resultValues(),
+	}, nil
 }
 
-// TODO(zariel): is it worth exporting this?
-func (iter *Iter) rowMap() (map[string]interface{}, error) {
-	if iter.err != nil {
-		return nil, iter.err
-	}
+func (iter *Iter) resultValues() []interface{} {
+	values := make([]interface{}, 0, len(iter.meta.columns))
 
-	rowData, _ := iter.RowData()
-	iter.Scan(rowData.Values...)
-	m := make(map[string]interface{}, len(rowData.Columns))
-	rowData.rowMap(m)
-	return m, nil
+	for _, column := range iter.meta.columns {
+		if c, ok := column.TypeInfo.(TupleTypeInfo); !ok {
+			val := column.TypeInfo.New()
+			values = append(values, val)
+		} else {
+			for _, elem := range c.Elems {
+				values = append(values, elem.New())
+			}
+		}
+	}
+	return values
+}
+
+func (iter *Iter) scanRow(dest ...interface{}) error {
+	sc := iter.Scanner()
+	if sc.Next() {
+		if err := sc.Scan(dest...); err != nil {
+			return err
+		}
+	}
+	return sc.Err()
 }
 
 // SliceMap is a helper function to make the API easier to use
 // returns the data from the query in the form of []map[string]interface{}
 func (iter *Iter) SliceMap() ([]map[string]interface{}, error) {
-	if iter.err != nil {
-		return nil, iter.err
+	rowData, err := iter.rowData()
+	if err != nil {
+		return nil, err
 	}
 
-	// Not checking for the error because we just did
-	rowData, _ := iter.RowData()
-	dataToReturn := make([]map[string]interface{}, 0)
-	for iter.Scan(rowData.Values...) {
+	var dataToReturn []map[string]interface{}
+	sc := iter.Scanner()
+	for sc.Next() {
+		row := make([]interface{}, len(rowData.Values))
 		m := make(map[string]interface{}, len(rowData.Columns))
-		rowData.rowMap(m)
+		for i, col := range rowData.Columns {
+			m[col] = row[i]
+		}
 		dataToReturn = append(dataToReturn, m)
 	}
-	if iter.err != nil {
-		return nil, iter.err
+	if err := sc.Err(); err != nil {
+		return nil, err
 	}
+
 	return dataToReturn, nil
 }
 
@@ -401,20 +409,18 @@ func (iter *Iter) SliceMap() ([]map[string]interface{}, error) {
 //		fmt.Printf("First: %s Age: %d Address: %q\n", fullName.FirstName, age, address)
 //	}
 func (iter *Iter) MapScan(m map[string]interface{}) bool {
-	if iter.err != nil {
+	rowData, err := iter.rowData()
+	if err != nil {
 		return false
 	}
 
-	// Not checking for the error because we just did
-	rowData, _ := iter.RowData()
-
-	for i, col := range rowData.Columns {
-		if dest, ok := m[col]; ok {
+	for i, col := range iter.meta.columns {
+		if dest, ok := m[col.Name]; ok {
 			rowData.Values[i] = dest
 		}
 	}
 
-	if iter.Scan(rowData.Values...) {
+	if iter.scan(rowData.Values...) {
 		rowData.rowMap(m)
 		return true
 	}
@@ -434,5 +440,4 @@ func LookupIP(host string) ([]net.IP, error) {
 		return nil, &net.DNSError{}
 	}
 	return net.LookupIP(host)
-
 }
