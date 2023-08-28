@@ -30,7 +30,7 @@ func goType(t TypeInfo) (reflect.Type, error) {
 		return reflect.TypeOf(*new(time.Duration)), nil
 	case TypeTimestamp:
 		return reflect.TypeOf(*new(time.Time)), nil
-	case TypeBlob:
+	case TypeBlob, TypeJsonb:
 		return reflect.TypeOf(*new([]byte)), nil
 	case TypeBoolean:
 		return reflect.TypeOf(*new(bool)), nil
@@ -137,6 +137,8 @@ func getCassandraBaseType(name string) Type {
 		return TypeSet
 	case "TupleType":
 		return TypeTuple
+	case "jsonb":
+		return TypeJsonb
 	default:
 		return TypeCustom
 	}

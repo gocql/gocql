@@ -4,8 +4,9 @@ on:
   push:
     branches:
       - master
+      - ci-test
   pull_request:
-    types: [ opened, synchronize, reopened ]
+    types: [opened, synchronize, reopened]
 
 env:
   CCM_VERSION: "6e71061146f7ae67b84ccd2b1d90d7319b640e4c"
@@ -16,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go: [ '1.19', '1.20' ]
+        go: ["1.19", "1.20"]
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
@@ -32,7 +33,6 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
       matrix:
         go: [ '1.19', '1.20' ]
         cassandra_version: [ '4.0.8', '4.1.1' ]
@@ -199,3 +199,30 @@ jobs:
         run: |
           export JVM_EXTRA_OPTS="${{env.JVM_EXTRA_OPTS}}"
           go test -v -run=TestAuthentication -tags "${{ matrix.tags }} gocql_debug" -timeout=15s -runauth ${{ env.args }}
+  integration-yugabyte:
+    timeout-minutes: 10
+    needs:
+      - build
+    name: Integration Tests (Yugabyte)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: [ '1.19', '1.20' ]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: ${{ matrix.go }}
+      - uses: actions/cache@v2
+        id: gomod-cache
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: Setup YugabyteDB cluster
+        uses: jameshartig/yugabyte-db-action@master
+        id: yb
+      - name: Integration tests
+        run: |
+          go test -tags "yugabyte gocql_debug" -timeout=5m -race ./...
