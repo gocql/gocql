@@ -277,10 +277,11 @@ type hostConnPool struct {
 	size     int
 	keyspace string
 	// protection for conns, closed, filling
-	mu      sync.RWMutex
-	conns   []*Conn
-	closed  bool
-	filling bool
+	mu        sync.RWMutex
+	conns     []*Conn
+	closed    bool
+	filling   bool
+	fillingWg sync.WaitGroup
 
 	pos    uint32
 	logger StdLogger
@@ -362,10 +363,19 @@ func (pool *hostConnPool) Size() int {
 func (pool *hostConnPool) Close() {
 	pool.mu.Lock()
 
+	// avoid closing a closed pool, concurrent close
+	// or a still filling pool
+	if pool.filling {
+		pool.mu.Unlock()
+		pool.fillingWg.Wait()
+		pool.mu.Lock()
+	}
+
 	if pool.closed {
 		pool.mu.Unlock()
 		return
 	}
+
 	pool.closed = true
 
 	// ensure we dont try to reacquire the lock in handleError
@@ -424,6 +434,7 @@ func (pool *hostConnPool) fill() {
 
 	// ok fill the pool
 	pool.filling = true
+	pool.fillingWg.Add(fillCount)
 
 	// allow others to access the pool while filling
 	pool.mu.Unlock()
@@ -446,6 +457,7 @@ func (pool *hostConnPool) fill() {
 
 		// filled one
 		fillCount--
+		pool.fillingWg.Done()
 	}
 
 	// fill the rest of the pool asynchronously
@@ -512,14 +524,12 @@ func (pool *hostConnPool) connectMany(count int) error {
 		return nil
 	}
 	var (
-		wg         sync.WaitGroup
 		mu         sync.Mutex
 		connectErr error
 	)
-	wg.Add(count)
 	for i := 0; i < count; i++ {
 		go func() {
-			defer wg.Done()
+			defer pool.fillingWg.Done()
 			err := pool.connect()
 			pool.logConnectErr(err)
 			if err != nil {
@@ -529,9 +539,7 @@ func (pool *hostConnPool) connectMany(count int) error {
 			}
 		}()
 	}
-	// wait for all connections are done
-	wg.Wait()
-
+	pool.fillingWg.Wait()
 	return connectErr
 }
 

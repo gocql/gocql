@@ -543,7 +543,7 @@ func (c *Conn) closeWithError(err error) {
 
 	// if error was nil then unblock the quit channel
 	c.cancel()
-	cerr := c.close()
+	cerr := c.close(err)
 
 	if err != nil {
 		c.errorHandler.HandleError(c, err, true)
@@ -553,8 +553,29 @@ func (c *Conn) closeWithError(err error) {
 	}
 }
 
-func (c *Conn) close() error {
-	return c.conn.Close()
+func (c *Conn) close(err error) error {
+	e := ObservedDisconnect{}
+
+	if c.session.connectObserver != nil {
+		e.Host = c.host
+		e.Start = time.Now()
+	}
+
+	r := c.conn.Close()
+
+	if c.session.connectObserver != nil {
+		// return specified error, otherwise return network error
+		if err != nil {
+			e.Err = err
+		} else {
+			e.Err = r
+		}
+
+		e.End = time.Now()
+		c.session.connectObserver.ObserveDisconnect(e)
+	}
+
+	return r
 }
 
 func (c *Conn) Close() {

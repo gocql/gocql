@@ -2243,10 +2243,22 @@ type ObservedConnect struct {
 	Err error
 }
 
+type ObservedDisconnect struct {
+	// Host is the information about the host about to connect
+	Host *HostInfo
+
+	Start time.Time // time immediately before the connection is closed
+	End   time.Time // time immediately after the connection is closed
+
+	// Err is the connection closing error (if any)
+	Err error
+}
+
 // ConnectObserver is the interface implemented by connect observers / stat collectors.
 type ConnectObserver interface {
 	// ObserveConnect gets called when a new connection to cassandra is made.
 	ObserveConnect(ObservedConnect)
+	ObserveDisconnect(ObservedDisconnect)
 }
 
 type Error struct {
