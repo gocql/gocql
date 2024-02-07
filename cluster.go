@@ -172,7 +172,7 @@ type ClusterConfig struct {
 	// If DisableInitialHostLookup then the driver will not attempt to get host info
 	// from the system.peers table, this will mean that the driver will connect to
 	// hosts supplied and will not attempt to lookup the hosts information, this will
-	// mean that data_centre, rack and token information will not be available and as
+	// mean that datacenter, rack and token information will not be available and as
 	// such host filtering and token aware query routing will not be available.
 	DisableInitialHostLookup bool
 

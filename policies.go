@@ -819,8 +819,8 @@ type dcAwareRR struct {
 }
 
 // DCAwareRoundRobinPolicy is a host selection policies which will prioritize and
-// return hosts which are in the local datacentre before returning hosts in all
-// other datercentres
+// return hosts which are in the local datacenter before returning hosts in all
+// other datacenters
 func DCAwareRoundRobinPolicy(localDC string) HostSelectionPolicy {
 	return &dcAwareRR{local: localDC}
 }
@@ -901,7 +901,7 @@ func (d *dcAwareRR) Pick(q ExecutableQuery) NextHost {
 
 // RackAwareRoundRobinPolicy is a host selection policies which will prioritize and
 // return hosts which are in the local rack, before hosts in the local datacenter but
-// a different rack, before hosts in all other datercentres
+// a different rack, before hosts in all other datacenters
 
 type rackAwareRR struct {
 	// lastUsedHostIdx keeps the index of the last used host.
